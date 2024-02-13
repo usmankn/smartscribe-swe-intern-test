@@ -1,161 +1,126 @@
 import React, { useState, useEffect, useRef } from "react";
 import { UploadManager } from "./UploadManager";
 
+// Define props interface for RecordingComponent
 interface RecordingProps {
-  onDownloadRecording: () => void;
+  onDownloadRecording?: () => void; // Optional callback function for when a recording is downloaded
 }
 
+// RecordingComponent functional component
 const RecordingComponent: React.FC<RecordingProps> = ({
   onDownloadRecording,
 }) => {
+  // State variables to manage recording process
   const [isRecording, setIsRecording] = useState<boolean>(false);
   const [recordingName, setRecordingName] = useState<string>("");
   const [progressTime, setProgressTime] = useState<number>(0);
   const [audioChunks, setAudioChunks] = useState<Blob[]>([]);
   const [audioUrl, setAudioUrl] = useState<string>("");
+  const [downloadStatus, setDownloadStatus] = useState<string>("");
+  const [uploadStatus, setUploadStatus] = useState<string>("");
+  const [hasMicrophoneAccess, setHasMicrophoneAccess] = useState<boolean>(false);
 
-  const progressInterval = useRef<number | null>(null);
+  // Reference for MediaRecorder and progress interval
   const mediaRecorder = useRef<MediaRecorder | null>(null);
+  const progressInterval = useRef<number | null>(null);
 
-  const handleStartRecording = () => {
-    if (!mediaRecorder.current) return;
-
-    setAudioChunks([]);
-    setAudioUrl("");
-    mediaRecorder.current.start();
-    setIsRecording(true);
-
-    progressInterval.current = setInterval(() => {
-      setProgressTime((prevTime) => prevTime + 1);
-    }, 1000);
-  };
-
-  const handleStopRecording = () => {
-    if (!mediaRecorder.current || !progressInterval.current) return;
-
-    mediaRecorder.current.stop();
-    setIsRecording(false);
-    progressInterval.current = null;
-    setProgressTime(0);
-  };
-
-  const handleUpload = (audioBlob: Blob) => {
-    UploadManager.upload(audioBlob)
-      .then((response) => {
-        console.log(
-          `Upload successful. Transcript: ${response.transcript}, Size: ${response.size} bytes`
-        );
-      })
-      .catch((error) => {
-        console.error("Upload failed:", error.message);
-      });
-  };
-
+  // Effect to request microphone access and set up MediaRecorder
   useEffect(() => {
-    const initMediaRecorder = async () => {
-      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-        console.error(
-          "Media Devices or getUserMedia not supported in this browser."
-        );
-        return;
-      }
-
-      try {
-        const stream = await navigator.mediaDevices.getUserMedia({
-          audio: true,
-        });
+    navigator.mediaDevices.getUserMedia({ audio: true })
+      .then((stream) => {
+        setHasMicrophoneAccess(true);
         mediaRecorder.current = new MediaRecorder(stream);
         mediaRecorder.current.ondataavailable = (event) => {
-          setAudioChunks((currentChunks) => [...currentChunks, event.data]);
+          setAudioChunks((prev) => [...prev, event.data]);
         };
-      } catch (err) {
-        console.error("Failed to get user media", err);
-      }
-    };
-
-    initMediaRecorder();
+      })
+      .catch(() => setHasMicrophoneAccess(false));
   }, []);
 
+  // Effect to update audio URL when recording ends
   useEffect(() => {
-    if (audioChunks.length > 0 && !isRecording) {
-      const audioBlob = new Blob(audioChunks, {
-        type: "audio/webm;codecs=opus",
-      });
+    if (!isRecording && audioChunks.length > 0) {
+      const audioBlob = new Blob(audioChunks, { type: "audio/webm; codecs=opus" });
       const url = URL.createObjectURL(audioBlob);
       setAudioUrl(url);
     }
   }, [audioChunks, isRecording]);
 
+  // Function to start recording
+  const handleStartRecording = () => {
+    if (!mediaRecorder.current || !hasMicrophoneAccess || recordingName === "") return;
+    setAudioChunks([]);
+    setAudioUrl("");
+    setDownloadStatus("");
+    mediaRecorder.current.start();
+    setIsRecording(true);
+    setProgressTime(0);
+    progressInterval.current = setInterval(() => {
+      setProgressTime((prevTime) => prevTime + 1);
+    }, 1000);
+  };
+
+  // Function to stop recording
+  const handleStopRecording = () => {
+    if (mediaRecorder.current && progressInterval.current) {
+      mediaRecorder.current.stop();
+      setIsRecording(false);
+      clearInterval(progressInterval.current);
+      progressInterval.current = null;
+    }
+  };
+
+  // Function to handle downloading the recording
+  const handleDownload = () => {
+    if (audioUrl) {
+      const link = document.createElement("a");
+      link.href = audioUrl;
+      link.download = recordingName || "new_recording";
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      setDownloadStatus("Download completed");
+      onDownloadRecording?.();
+    }
+  };
+
+  // Function to handle uploading the recording
+  const handleUpload = () => {
+    const audioBlob = new Blob(audioChunks, { type: "audio/webm; codecs=opus" });
+    setUploadStatus("Uploading...");
+    UploadManager.upload(audioBlob).then((result) => {
+      setUploadStatus(`Upload successful: Transcript - "${result.transcript}"`);
+    }).catch((error) => {
+      setUploadStatus("Upload failed: " + error.message);
+    });
+  };
+
+  // Render UI components based on microphone access
   return (
-    <div
-      style={{
-        display: "flex",
-        flexDirection: "column",
-        alignItems: "center",
-        justifyContent: "space-around",
-        height: "70vh",
-        padding: "20px",
-        boxSizing: "border-box",
-        border: "2px solid",
-      }}
-    >
-      <input
-        type="text"
-        value={recordingName}
-        onChange={(e) => setRecordingName(e.target.value)}
-        placeholder="Name your recording"
-        style={{
-          width: "80%",
-          padding: "10px",
-          marginBottom: "20px",
-          borderRadius: "5px",
-          border: "1px solid #ccc",
-        }}
-      />
-      <button
-        onClick={isRecording ? handleStopRecording : handleStartRecording}
-        style={{
-          width: "80%",
-          padding: "10px",
-          marginBottom: "20px",
-          borderRadius: "5px",
-          border: "none",
-          backgroundColor: "#007bff",
-          color: "white",
-          cursor: "pointer",
-        }}
-      >
-        {isRecording ? "Stop Recording" : "Start Recording"}
-      </button>
-      <div style={{ marginBottom: "20px" }}>
-        Progress Time: {progressTime} seconds
-      </div>
-      {audioUrl && (
-        <div>
-          <button
-            onClick={() => {
-              const link = document.createElement("a");
-              link.href = audioUrl;
-              link.download = `file.webm`;
-              document.body.appendChild(link);
-              link.click();
-              document.body.removeChild(link);
-              onDownloadRecording();
-            }}
-            style={{
-              width: "80%",
-              padding: "10px",
-              marginBottom: "20px",
-              borderRadius: "5px",
-              border: "none",
-              backgroundColor: "#28a745",
-              color: "white",
-              cursor: "pointer",
-            }}
-          >
-            Download Recording
-          </button>
-        </div>
+    <div>
+      {hasMicrophoneAccess ? (
+        <>
+          <input
+            type="text"
+            value={recordingName}
+            onChange={(e) => setRecordingName(e.target.value)}
+            placeholder="Name your recording"
+            disabled={isRecording}
+          />
+          <button onClick={handleStartRecording} disabled={isRecording || recordingName === ""}>Start Recording</button>
+          <button onClick={handleStopRecording} disabled={!isRecording}>Stop Recording</button>
+          {audioUrl && (
+            <>
+              <button onClick={handleDownload}>Download Recording</button>
+              <button onClick={handleUpload} disabled={isRecording || uploadStatus === "Uploading..."}>Upload</button>
+            </>
+          )}
+          <div>Progress Time: {progressTime} seconds</div>
+          <div>{downloadStatus}</div>
+          <div>{uploadStatus}</div>
+        </>
+      ) : (
+        <p>Please grant microphone access to start recording.</p>
       )}
     </div>
   );
